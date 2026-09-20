@@ -33,6 +33,18 @@ BarWidget {
   property bool adaptDrcOn: false
   property bool enhancerOn: false
   property bool cinema3dOn: false
+  property bool serverAvailable: false
+  property string serverPlayback: "Stop"
+  property string serverRepeat: "Off"
+  property string serverShuffle: "Off"
+  property string serverArtist: ""
+  property string serverAlbum: ""
+  property string serverSong: ""
+  property string serverMenuName: "Media Server"
+  property int serverMenuLayer: 1
+  property int serverCurrentLine: 0
+  property int serverMaxLine: 0
+  property var serverLines: []
 
   readonly property string deviceName: String(setting("deviceName", "Yamaha AVR"))
   readonly property string host: String(setting("host", ""))
@@ -67,6 +79,18 @@ BarWidget {
     adaptDrcOn = String(message.adaptiveDrc || "").toLowerCase() === "auto"
     enhancerOn = String(message.enhancer || "").toLowerCase() === "on"
     cinema3dOn = String(message.cinema3d || "").toLowerCase() === "auto" || String(message.cinema3d || "").toLowerCase() === "on"
+    serverAvailable = Boolean(message.serverAvailable)
+    serverPlayback = String(message.serverPlayback || serverPlayback)
+    serverRepeat = String(message.serverRepeat || serverRepeat)
+    serverShuffle = String(message.serverShuffle || serverShuffle)
+    serverArtist = String(message.serverArtist || "")
+    serverAlbum = String(message.serverAlbum || "")
+    serverSong = String(message.serverSong || "")
+    serverMenuName = String(message.serverMenuName || serverMenuName)
+    serverMenuLayer = Number(message.serverMenuLayer || 1)
+    serverCurrentLine = Number(message.serverCurrentLine || 0)
+    serverMaxLine = Number(message.serverMaxLine || 0)
+    serverLines = message.serverLines || []
     if (message.volumeDb !== undefined && message.volumeDb !== null && message.volumeDb !== "") {
       volumeDb = Number(message.volumeDb)
       volumeLabel = Number(message.volumeDb).toFixed(1) + " dB"
@@ -149,12 +173,25 @@ BarWidget {
 
   function handleTextKey(text) {
     var key = String(text || "").toLowerCase()
-    if (viewMode === "devices" || viewMode === "audio") {
+    if (viewMode === "devices" || viewMode === "audio" || viewMode === "server") {
       if (key === "b" || key === "q") { viewMode = "remote"; return }
       if (viewMode === "audio") {
         if (key === "d") sendAction("adaptive-drc-toggle")
         else if (key === "h") sendAction("enhancer-toggle")
         else if (key === "c") sendAction("cinema3d-toggle")
+        return
+      }
+      if (viewMode === "server") {
+        if (key === "p") sendAction(serverPlayback.toLowerCase() === "play" ? "server-stop" : "server-play")
+        else if (key === "x") sendAction("server-stop")
+        else if (key === "n") sendAction("server-next")
+        else if (key === "v") sendAction("server-previous")
+        else if (key === "w") sendAction("server-up")
+        else if (key === "s") sendAction("server-down")
+        else if (key === "e") sendAction("server-select")
+        else if (key === "h") sendAction("server-back")
+        else if (key === "g") sendAction("server-home")
+        else if (key === "r") sendAction("server-refresh")
         return
       }
       return
@@ -167,6 +204,7 @@ BarWidget {
     else if (key === "-" || key === "_") sendAction("volume-down")
     else if (key === "1") sendAction("input-av1")
     else if (key === "6") sendAction("input-av6")
+    else if (key === "e") { viewMode = "server"; sendAction("input-server") }
     else if (key === "s") sendAction("straight")
     else if (key === "7") sendAction("program-7ch")
     else if (key === "a") viewMode = "audio"
@@ -245,6 +283,7 @@ BarWidget {
 
   component RemoteKey: Button {
     property string action: ""
+    property string targetView: ""
     property bool on: false
     property real keyWidth: 92
     property real keyHeight: 38
@@ -257,7 +296,10 @@ BarWidget {
     fontSize: Style.font.bodySmall
     iconSize: Style.font.iconLarge
     bordered: true
-    onClicked: root.sendAction(action)
+    onClicked: {
+      root.sendAction(action)
+      if (targetView) root.viewMode = targetView
+    }
   }
 
   component ToneRow: Row {
@@ -430,7 +472,9 @@ BarWidget {
               font.bold: true
             }
             Text {
-              text: root.viewMode === "remote" ? "YAMAHA AVR" : (root.viewMode === "audio" ? "AUDIO CONTROLS" : "RECEIVER HOST")
+              text: root.viewMode === "remote" ? "YAMAHA AVR"
+                : (root.viewMode === "audio" ? "AUDIO CONTROLS"
+                : (root.viewMode === "server" ? "MEDIA SERVER" : "RECEIVER HOST"))
               textFormat: Text.PlainText
               color: root.dim
               font.family: root.fontFamily
@@ -536,8 +580,9 @@ BarWidget {
           Row {
             anchors.horizontalCenter: parent.horizontalCenter
             spacing: Style.space(7)
-            RemoteKey { action: "input-av1"; text: "AV1"; on: root.inputSel.toUpperCase() === "AV1"; keyWidth: 142 }
-            RemoteKey { action: "input-av6"; text: "AV6"; on: root.inputSel.toUpperCase() === "AV6"; keyWidth: 142 }
+            RemoteKey { action: "input-av1"; text: "AV1"; on: root.inputSel.toUpperCase() === "AV1"; keyWidth: 92 }
+            RemoteKey { action: "input-av6"; text: "AV6"; on: root.inputSel.toUpperCase() === "AV6"; keyWidth: 92 }
+            RemoteKey { action: "input-server"; targetView: "server"; text: "SERVER"; on: root.inputSel.toUpperCase() === "SERVER"; keyWidth: 92 }
           }
 
           Row {
@@ -594,11 +639,191 @@ BarWidget {
             width: parent.width
             wrapMode: Text.Wrap
             horizontalAlignment: Text.AlignHCenter
-            text: "[1] AV1  [6] AV6  [A] AUDIO  [D] HOST  [S] STRT  [7] 7CH"
+            text: "[1] AV1  [6] AV6  [E] SERVER  [A] AUDIO  [D] HOST"
             textFormat: Text.PlainText
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
+          }
+        }
+
+        Column {
+          visible: root.viewMode === "server"
+          width: parent.width
+          spacing: Style.space(8)
+
+          Text {
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            text: root.serverSong || (root.serverAvailable ? "Nothing playing" : "Media server unavailable")
+            textFormat: Text.PlainText
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            font.bold: true
+            wrapMode: Text.Wrap
+          }
+
+          Text {
+            visible: root.serverArtist !== "" || root.serverAlbum !== ""
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            text: [root.serverArtist, root.serverAlbum].filter(function(value) { return value !== "" }).join("  ·  ")
+            textFormat: Text.PlainText
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.Wrap
+          }
+
+          Text {
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            text: root.serverPlayback.toUpperCase() + "  ·  REPEAT " + root.serverRepeat.toUpperCase()
+              + "  ·  SHUFFLE " + root.serverShuffle.toUpperCase()
+            textFormat: Text.PlainText
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.Wrap
+          }
+
+          Row {
+            anchors.horizontalCenter: parent.horizontalCenter
+            spacing: Style.space(7)
+            RemoteKey { action: "server-previous"; text: "PREV"; tooltipText: "Previous track"; keyWidth: 92 }
+            RemoteKey {
+              action: root.serverPlayback.toLowerCase() === "play" ? "server-stop" : "server-play"
+              text: root.serverPlayback.toLowerCase() === "play" ? "STOP" : "PLAY"
+              on: root.serverPlayback.toLowerCase() === "play"
+              keyWidth: 92
+            }
+            RemoteKey { action: "server-next"; text: "NEXT"; tooltipText: "Next track"; keyWidth: 92 }
+          }
+
+          Row {
+            anchors.horizontalCenter: parent.horizontalCenter
+            spacing: Style.space(7)
+            RemoteKey { action: "server-repeat"; text: "RPT " + root.serverRepeat.toUpperCase(); on: root.serverRepeat !== "Off"; keyWidth: 142 }
+            RemoteKey { action: "server-shuffle"; text: "SHUF"; on: root.serverShuffle === "On"; keyWidth: 142 }
+          }
+
+          PanelSeparator { width: parent.width; foreground: root.foreground }
+
+          Text {
+            width: parent.width
+            text: root.serverMenuName + "  ·  "
+              + (serverSeek.dragging ? Math.round(serverSeek.liveValue) : root.serverCurrentLine)
+              + "/" + root.serverMaxLine
+            textFormat: Text.PlainText
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+            elide: Text.ElideRight
+          }
+
+          Row {
+            width: parent.width
+            spacing: serverSeekRail.visible ? Style.space(6) : 0
+
+            Column {
+              id: serverList
+              width: parent.width - serverSeekRail.width - parent.spacing
+              spacing: Style.space(8)
+
+              Repeater {
+                model: root.serverLines
+                Button {
+                  required property var modelData
+                  readonly property bool currentTrack: modelData.attribute === "Item"
+                    && modelData.text === root.serverSong
+                  width: serverList.width
+                  height: 32
+                  text: (modelData.attribute === "Container" ? "▸ "
+                    : (currentTrack ? (root.serverPlayback.toLowerCase() === "play" ? "▶ " : "Ⅱ ") : "♪ "))
+                    + modelData.text
+                  tooltipText: modelData.text
+                  selected: currentTrack
+                  foreground: root.foreground
+                  accent: root.accent
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.caption
+                  bordered: true
+                  onClicked: root.sendAction("server-line-" + modelData.index)
+                }
+              }
+            }
+
+            Item {
+              id: serverSeekRail
+              visible: root.serverMaxLine > 1
+              width: visible ? Style.space(24) : 0
+              height: Math.max(32, serverList.implicitHeight)
+
+              PanelSlider {
+                id: serverSeek
+                anchors.centerIn: parent
+                width: serverSeekRail.height
+                height: serverSeekRail.width
+                rotation: 90
+                bar: root.bar
+                minimum: 1
+                maximum: Math.max(1, root.serverMaxLine)
+                step: 8
+                integer: true
+                value: Math.max(1, root.serverCurrentLine)
+                onReleased: function(value) {
+                  root.sendAction("server-jump-" + Math.round(value))
+                }
+              }
+            }
+          }
+
+          Text {
+            visible: root.serverLines.length === 0
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            text: "No items in this folder"
+            textFormat: Text.PlainText
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Row {
+            anchors.horizontalCenter: parent.horizontalCenter
+            spacing: Style.space(5)
+            RemoteKey { action: "server-home"; text: "HOME"; keyWidth: 54; keyHeight: 32; fontSize: Style.font.caption }
+            RemoteKey { action: "server-back"; text: "BACK"; keyWidth: 54; keyHeight: 32; fontSize: Style.font.caption }
+            RemoteKey { action: "server-page-up"; text: "PG↑"; keyWidth: 54; keyHeight: 32; fontSize: Style.font.caption }
+            RemoteKey { action: "server-page-down"; text: "PG↓"; keyWidth: 54; keyHeight: 32; fontSize: Style.font.caption }
+            RemoteKey { action: "server-refresh"; text: "REF"; keyWidth: 54; keyHeight: 32; fontSize: Style.font.caption }
+          }
+
+          Button {
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: 291
+            height: 38
+            text: "BACK TO REMOTE"
+            iconText: "󰁍"
+            foreground: root.foreground
+            accent: root.accent
+            fontFamily: root.fontFamily
+            fontSize: Style.font.bodySmall
+            bordered: true
+            onClicked: root.viewMode = "remote"
+          }
+
+          Text {
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            text: "[P] PLAY/STOP  [V/N] PREV/NEXT  [B] REMOTE"
+            textFormat: Text.PlainText
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.Wrap
           }
         }
 

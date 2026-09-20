@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import html
 import ipaddress
 import json
 import os
@@ -26,6 +27,7 @@ MAX_STATE_SIZE = 65536
 MAX_XML_SIZE = 65536
 MAX_STDIN_LINE = 65536
 MAX_ELEMENTS = 500
+SERVER_SETTLE_SECONDS = 0.9
 
 class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
     """Reject any HTTP redirects to prevent SSRF pivoting."""
@@ -84,7 +86,7 @@ def sanitize_text(text: Any, max_len: int = 64) -> str:
     """Sanitize string to printable characters and enforce length ceiling."""
     if text is None:
         return ""
-    cleaned = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", str(text)).strip()
+    cleaned = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", html.unescape(str(text))).strip()
     return cleaned[:max_len]
 
 
@@ -257,6 +259,18 @@ class YamahaSession:
         self.bass = 0
         self.treble = 0
         self.adaptive_drc = "Off"
+        self.server_available = False
+        self.server_playback = "Stop"
+        self.server_repeat = "Off"
+        self.server_shuffle = "Off"
+        self.server_artist = ""
+        self.server_album = ""
+        self.server_song = ""
+        self.server_menu_name = "Media Server"
+        self.server_menu_layer = 1
+        self.server_current_line = 0
+        self.server_max_line = 0
+        self.server_lines: list[dict[str, Any]] = []
         self.load_state()
 
     def load_state(self) -> None:
@@ -352,6 +366,89 @@ class YamahaSession:
             except Exception:
                 pass
 
+        if self.input_sel.upper() == "SERVER":
+            self.refresh_server()
+
+    def refresh_server(self) -> None:
+        play_root = self.post("GET", "<SERVER><Play_Info>GetParam</Play_Info></SERVER>")
+        availability = sanitize_text(play_root.findtext(".//SERVER/Play_Info/Feature_Availability"), 32)
+        self.server_available = availability.lower() == "ready"
+        self.server_playback = sanitize_text(
+            play_root.findtext(".//SERVER/Play_Info/Playback_Info") or self.server_playback, 32
+        )
+        self.server_repeat = sanitize_text(
+            play_root.findtext(".//SERVER/Play_Info/Play_Mode/Repeat") or self.server_repeat, 16
+        )
+        self.server_shuffle = sanitize_text(
+            play_root.findtext(".//SERVER/Play_Info/Play_Mode/Shuffle") or self.server_shuffle, 16
+        )
+        self.server_artist = sanitize_text(play_root.findtext(".//SERVER/Play_Info/Meta_Info/Artist"), 128)
+        self.server_album = sanitize_text(play_root.findtext(".//SERVER/Play_Info/Meta_Info/Album"), 128)
+        self.server_song = sanitize_text(play_root.findtext(".//SERVER/Play_Info/Meta_Info/Song"), 128)
+
+        list_root = self.post("GET", "<SERVER><List_Info>GetParam</List_Info></SERVER>")
+        self.server_menu_name = sanitize_text(
+            list_root.findtext(".//SERVER/List_Info/Menu_Name") or self.server_menu_name, 128
+        )
+        layer = list_root.findtext(".//SERVER/List_Info/Menu_Layer")
+        current_line = list_root.findtext(".//SERVER/List_Info/Cursor_Position/Current_Line")
+        max_line = list_root.findtext(".//SERVER/List_Info/Cursor_Position/Max_Line")
+        if layer and layer.isdigit():
+            self.server_menu_layer = max(1, min(16, int(layer)))
+        if current_line and current_line.isdigit():
+            self.server_current_line = max(0, min(65536, int(current_line)))
+        if max_line and max_line.isdigit():
+            self.server_max_line = max(0, min(65536, int(max_line)))
+
+        lines: list[dict[str, Any]] = []
+        for index in range(1, 9):
+            base = f".//SERVER/List_Info/Current_List/Line_{index}"
+            text = sanitize_text(list_root.findtext(f"{base}/Txt"), 128)
+            attribute = sanitize_text(list_root.findtext(f"{base}/Attribute"), 32)
+            if text:
+                lines.append({"index": index, "text": text, "attribute": attribute})
+        self.server_lines = lines
+
+    def server_payload(self) -> dict[str, Any]:
+        return {
+            "serverAvailable": self.server_available,
+            "serverPlayback": sanitize_text(self.server_playback, 32),
+            "serverRepeat": sanitize_text(self.server_repeat, 16),
+            "serverShuffle": sanitize_text(self.server_shuffle, 16),
+            "serverArtist": sanitize_text(self.server_artist, 128),
+            "serverAlbum": sanitize_text(self.server_album, 128),
+            "serverSong": sanitize_text(self.server_song, 128),
+            "serverMenuName": sanitize_text(self.server_menu_name, 128),
+            "serverMenuLayer": self.server_menu_layer,
+            "serverCurrentLine": self.server_current_line,
+            "serverMaxLine": self.server_max_line,
+            "serverLines": self.server_lines,
+        }
+
+    def select_visible_adjacent_server_track(self, offset: int) -> bool:
+        current_song = self.server_song.casefold()
+        if not current_song:
+            return False
+        for position, line in enumerate(self.server_lines):
+            if str(line.get("attribute", "")).lower() != "item":
+                continue
+            if str(line.get("text", "")).casefold() != current_song:
+                continue
+            target_position = position + offset
+            if not 0 <= target_position < len(self.server_lines):
+                return False
+            target = self.server_lines[target_position]
+            if str(target.get("attribute", "")).lower() != "item":
+                return False
+            line_number = int(target["index"])
+            self.post(
+                "PUT",
+                f"<SERVER><List_Control><Direct_Sel>Line_{line_number}</Direct_Sel></List_Control></SERVER>",
+            )
+            time.sleep(SERVER_SETTLE_SECONDS)
+            return True
+        return False
+
     def status_payload(self) -> dict[str, Any]:
         status = "awake" if self.power == "On" else "standby"
         return {
@@ -375,6 +472,7 @@ class YamahaSession:
             "trebleVal": self.treble,
             "adaptiveDrc": self.adaptive_drc,
             "connected": self.connected,
+            **self.server_payload(),
         }
 
     def dispatch(self, action: str) -> dict[str, Any]:
@@ -420,6 +518,59 @@ class YamahaSession:
             }
             target_input = mapping.get(inp, inp)
             self.post("PUT", f"<Main_Zone><Input><Input_Sel>{target_input}</Input_Sel></Input></Main_Zone>")
+        elif action == "server-refresh":
+            self.refresh_server()
+            return self.status_payload()
+        elif action in {"server-play", "server-stop"}:
+            playback = action.removeprefix("server-").title()
+            self.post("PUT", f"<SERVER><Play_Control><Playback>{playback}</Playback></Play_Control></SERVER>")
+            time.sleep(SERVER_SETTLE_SECONDS)
+        elif action in {"server-next", "server-previous"}:
+            direction = "Skip Fwd" if action == "server-next" else "Skip Rev"
+            previous_song = self.server_song
+            self.post("PUT", f"<SERVER><Play_Control><Playback>{direction}</Playback></Play_Control></SERVER>")
+            time.sleep(SERVER_SETTLE_SECONDS)
+            self.refresh_server()
+            if self.server_song == previous_song:
+                offset = 1 if action == "server-next" else -1
+                self.select_visible_adjacent_server_track(offset)
+        elif action == "server-repeat":
+            cycle = {"Off": "One", "One": "All", "All": "Off"}
+            target = cycle.get(self.server_repeat, "Off")
+            self.post("PUT", f"<SERVER><Play_Control><Play_Mode><Repeat>{target}</Repeat></Play_Mode></Play_Control></SERVER>")
+            self.server_repeat = target
+            time.sleep(SERVER_SETTLE_SECONDS)
+        elif action == "server-shuffle":
+            target = "Off" if self.server_shuffle == "On" else "On"
+            self.post("PUT", f"<SERVER><Play_Control><Play_Mode><Shuffle>{target}</Shuffle></Play_Mode></Play_Control></SERVER>")
+            self.server_shuffle = target
+            time.sleep(SERVER_SETTLE_SECONDS)
+        elif action in {"server-up", "server-down", "server-back", "server-select", "server-home"}:
+            cursor = {
+                "server-up": "Up",
+                "server-down": "Down",
+                "server-back": "Return",
+                "server-select": "Sel",
+                "server-home": "Return to Home",
+            }[action]
+            self.post("PUT", f"<SERVER><List_Control><Cursor>{cursor}</Cursor></List_Control></SERVER>")
+            time.sleep(SERVER_SETTLE_SECONDS)
+        elif action in {"server-page-up", "server-page-down"}:
+            page = "Up" if action == "server-page-up" else "Down"
+            self.post("PUT", f"<SERVER><List_Control><Page>{page}</Page></List_Control></SERVER>")
+            time.sleep(SERVER_SETTLE_SECONDS)
+        elif re.fullmatch(r"server-jump-\d{1,5}", action):
+            requested_line = int(action.rsplit("-", 1)[1])
+            line_number = max(1, min(self.server_max_line or 65536, requested_line))
+            self.post(
+                "PUT",
+                f"<SERVER><List_Control><Jump_Line>{line_number}</Jump_Line></List_Control></SERVER>",
+            )
+            time.sleep(SERVER_SETTLE_SECONDS)
+        elif re.fullmatch(r"server-line-[1-8]", action):
+            line_number = int(action.rsplit("-", 1)[1])
+            self.post("PUT", f"<SERVER><List_Control><Direct_Sel>Line_{line_number}</Direct_Sel></List_Control></SERVER>")
+            time.sleep(SERVER_SETTLE_SECONDS)
         elif action in {"straight", "program-straight"}:
             if self.pure_direct == "On":
                 self.post("PUT", "<Main_Zone><Sound_Video><Pure_Direct><Mode>Off</Mode></Pure_Direct></Sound_Video></Main_Zone>")

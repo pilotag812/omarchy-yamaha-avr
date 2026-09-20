@@ -44,7 +44,8 @@ YNCA; this plugin only uses that older API.
 - Bar chip labelled **AV**
 - Power, mute, and volume (absolute dB on RX-V575/RX-V677; `Val=Up` is rejected)
 - Quick volume presets row: **-60 dB** (Night), **-50 dB** (Quiet), **-45 dB** (TV), **-40 dB** (Normal/Movies)
-- Direct AV1 and AV6 input selection
+- Direct AV1, AV6, and SERVER input selection
+- DLNA media library browser with now-playing metadata, transport controls, repeat, and shuffle
 - Straight and 7ch Stereo
 - Dedicated **Audio Controls** view:
   - **Bass & Treble** tone controls (-6.0 dB to +6.0 dB in 0.5 dB steps) with quick 0 dB reset
@@ -63,7 +64,7 @@ before installing it.
 ## Install
 
 ```bash
-omarchy plugin add https://github.com/bjarkimg/omarchy-yamaha-avr.git --enable
+omarchy plugin add https://github.com/pilotag812/omarchy-yamaha-avr.git --enable
 ```
 
 Open the **AV** chip, press **D**, enter the receiver IP, and connect. Network
@@ -80,6 +81,7 @@ name is read from the box after the first successful GET.
 | - / + | Volume |
 | 1 | AV1 |
 | 6 | AV6 |
+| E | Open SERVER media library |
 | S | Straight |
 | 7 | 7ch Stereo |
 | A | Audio controls view |
@@ -89,7 +91,8 @@ name is read from the box after the first successful GET.
 
 - **Bar chip (AV):** Left-click opens/closes the panel. Right-click or middle-click toggles power directly.
 - **Remote buttons:** Dedicated **ON**, **OFF**, and **MUTE** buttons with active state highlights.
-- **Input row:** Direct selection for AV1 and AV6.
+- **Input row:** Direct selection for AV1, AV6, and SERVER.
+- **Media Server view:** Browse DLNA folders, jump through long lists with the vertical position slider, select tracks, control playback, and toggle repeat or shuffle.
 - **Audio view:** Bass/Treble steppers and toggles for Adaptive DRC, Enhancer, and Cinema DSP 3D.
 
 ## Update

@@ -14,7 +14,11 @@ usage() {
 Usage: yamaha-avr [--host HOST] [--name NAME] ACTION
 
   power mute volume-up volume-down status
-  input-av1 input-av6
+  input-av1 input-av6 input-server
+  server-refresh server-play server-stop
+  server-previous server-next server-repeat server-shuffle
+  server-home server-back server-up server-down server-select
+  server-jump-LINE
   straight program-7ch
   session
 
