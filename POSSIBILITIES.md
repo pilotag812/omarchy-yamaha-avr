@@ -6,30 +6,17 @@ These features are documented for future reference and expansion.
 
 ---
 
-## 1. Advanced Audio & Tone Controls (Implemented in v1.0.4)
+## 1. Advanced Audio & Tone Controls (model-dependent)
 - **Tone Control (Bass / Treble)**:
   - Range: `-6.0 dB` to `+6.0 dB` in `0.5 dB` steps (`-60..+60` in tenths of dB)
   - Fixed turnover frequencies: Bass at `350 Hz`, Treble at `3.5 kHz`
   - XML: `<Main_Zone><Sound_Video><Tone><Bass><Val>{-60..60}</Val><Exp>1</Exp><Unit>dB</Unit></Bass><Treble><Val>{-60..60}</Val><Exp>1</Exp><Unit>dB</Unit></Treble></Tone></Sound_Video></Main_Zone>`
-- **Subwoofer Trim**:
-  - Range: `-6.0 dB` to `+6.0 dB` in `0.5 dB` steps (`-60..+60`)
-  - XML: `<Main_Zone><Volume><Subwoofer_Trim><Val>{-60..60}</Val><Exp>1</Exp><Unit>dB</Unit></Subwoofer_Trim></Volume></Main_Zone>`
-- **Extra Bass**:
-  - Adds psychoacoustic bass reinforcement to front speakers and subwoofer
-  - XML: `<Main_Zone><Sound_Video><Extra_Bass>{Auto|Off}</Extra_Bass></Sound_Video></Main_Zone>`
-- **YPAO Volume**:
-  - Automatic loudness / frequency compensation curve based on master volume
-  - XML: `<Main_Zone><Sound_Video><YPAO_Volume>{Auto|Off}</YPAO_Volume></Sound_Video></Main_Zone>`
 - **Adaptive DRC (Dynamic Range Control)**:
   - Compresses dynamic range at lower volumes for late-night dialogue intelligibility
   - XML: `<Main_Zone><Sound_Video><Adaptive_DRC>{Auto|Off}</Adaptive_DRC></Sound_Video></Main_Zone>`
 - **Compressed Music Enhancer**:
   - High and low frequency harmonic regeneration for compressed audio/streaming
   - XML: `<Main_Zone><Surround><Program_Sel><Current><Enhancer>{On|Off}</Enhancer></Current></Program_Sel></Surround></Main_Zone>`
-- **Dialogue Adjust (Level & Lift)**:
-  - Dialogue Level (`0..3`): Midrange vocal presence boost
-  - Dialogue Lift (`0..5`): Uses presence speakers to raise sound stage vertically
-  - XML: `<Main_Zone><Sound_Video><Dialogue_Adjust><Dialogue_Lift>{0..5}</Dialogue_Lift><Dialogue_Lvl>{0..3}</Dialogue_Lvl></Dialogue_Adjust></Sound_Video></Main_Zone>`
 - **CINEMA DSP 3D**:
   - 3D soundfield generation using front presence channels
   - XML: `<Main_Zone><Surround><_3D_Cinema_DSP>{Auto|Off}</_3D_Cinema_DSP></Surround></Main_Zone>`

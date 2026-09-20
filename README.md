@@ -28,7 +28,8 @@ YNCA; this plugin only uses that older API.
 
 ### Tested here
 
-- Yamaha **RX-V677** (2014, 7.2, network name `RX-V677 B85220`)
+- Yamaha **RX-V575** (2013, 7.2)
+- Yamaha **RX-V677** (2014, 7.2; original development target)
 
 ### Not this plugin
 
@@ -41,20 +42,13 @@ YNCA; this plugin only uses that older API.
 ## Features
 
 - Bar chip labelled **AV**
-- Power, mute, and volume (absolute dB on RX-V677; `Val=Up` is rejected)
+- Power, mute, and volume (absolute dB on RX-V575/RX-V677; `Val=Up` is rejected)
 - Quick volume presets row: **-60 dB** (Night), **-50 dB** (Quiet), **-45 dB** (TV), **-40 dB** (Normal/Movies)
-- HDMI 1–5 and scenes 1–4
-- Straight, 7ch Stereo, and Pure Direct
-- Draggable 7.1 seat map:
-  - **Left / right** writes per-speaker level trims (`Speaker_Preout` Pattern 1).
-    Center of the map is the receiver's current calibration (YPAO). Dragging
-    back to the middle restores it.
-  - **Front / back** is Dialogue Lift (0–5)
+- Direct AV1 and AV6 input selection
+- Straight and 7ch Stereo
 - Dedicated **Audio Controls** view:
   - **Bass & Treble** tone controls (-6.0 dB to +6.0 dB in 0.5 dB steps) with quick 0 dB reset
-  - **Subwoofer Trim** (-6.0 dB to +6.0 dB in 0.5 dB steps) with quick 0 dB reset
-  - **Dialogue Level** (0–3) and **Dialogue Lift** (0–5) selectors
-  - **DSP Processing toggles**: Extra Bass, YPAO Volume, Adaptive DRC, Enhancer, and Cinema DSP 3D
+  - **DSP Processing toggles**: Adaptive DRC, Enhancer, and Cinema DSP 3D
 
 ## Requirements
 
@@ -84,10 +78,10 @@ name is read from the box after the first successful GET.
 | P | Power Toggle |
 | M | Mute |
 | - / + | Volume |
-| 1–5 | HDMI 1–5 |
+| 1 | AV1 |
+| 6 | AV6 |
 | S | Straight |
 | 7 | 7ch Stereo |
-| U | Pure Direct |
 | A | Audio controls view |
 | D | Receiver host settings |
 | B | Back to remote (from Audio or Host view) |
@@ -95,8 +89,8 @@ name is read from the box after the first successful GET.
 
 - **Bar chip (AV):** Left-click opens/closes the panel. Right-click or middle-click toggles power directly.
 - **Remote buttons:** Dedicated **ON**, **OFF**, and **MUTE** buttons with active state highlights.
-- **Seat map:** Drag the sofa on the 7.1 map for seat position (L/R tilt and Dialogue Lift).
-- **Audio view:** Steppers for Bass/Treble/Sub Trim, Dialogue level/lift pills, and toggles for Extra Bass, YPAO Volume, Adaptive DRC, Enhancer, and Cinema DSP 3D.
+- **Input row:** Direct selection for AV1 and AV6.
+- **Audio view:** Bass/Treble steppers and toggles for Adaptive DRC, Enhancer, and Cinema DSP 3D.
 
 ## Update
 
@@ -110,7 +104,7 @@ omarchy plugin update io.github.bjarkimg.yamaha-avr
 omarchy plugin remove io.github.bjarkimg.yamaha-avr
 ```
 
-Optionally remove remembered host and seat-calibration baseline:
+Optionally remove the remembered host:
 
 ```bash
 rm -f "${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/settings/yamaha-avr.json"

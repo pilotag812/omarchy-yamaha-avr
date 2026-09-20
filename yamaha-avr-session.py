@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""YNCA session backend for Yamaha network AV receivers (RX-V677 and similar)."""
+"""YNCA session backend for Yamaha network AV receivers such as the RX-V575."""
 
 from __future__ import annotations
 
@@ -22,20 +22,10 @@ from typing import Any
 
 
 TIMEOUT = 4
-SPEAKER_LEVEL_MIN = -100
-SPEAKER_LEVEL_MAX = 100
 MAX_STATE_SIZE = 65536
 MAX_XML_SIZE = 65536
 MAX_STDIN_LINE = 65536
 MAX_ELEMENTS = 500
-
-LR_PAIRS = (
-    ("Front_L", "Front_R"),
-    ("Sur_L", "Sur_R"),
-    ("Sur_Back_L", "Sur_Back_R"),
-    ("Front_Presence_L", "Front_Presence_R"),
-)
-
 
 class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
     """Reject any HTTP redirects to prevent SSRF pivoting."""
@@ -264,17 +254,9 @@ class YamahaSession:
         self.enhancer = "Off"
         self.pure_direct = "Off"
         self.cinema_3d = "Off"
-        self.dialogue_lift = 0
-        self.dialogue_lvl = 0
         self.bass = 0
         self.treble = 0
-        self.subwoofer_trim = 0
-        self.extra_bass = "Off"
-        self.ypao_volume = "Off"
         self.adaptive_drc = "Off"
-        self.lr_balance = 0
-        self.speaker_levels: dict[str, int] = {}
-        self.seat_baseline: dict[str, int] = {}
         self.load_state()
 
     def load_state(self) -> None:
@@ -282,20 +264,12 @@ class YamahaSession:
         if isinstance(loaded, dict):
             self.host = str(loaded.get("host") or self.host)
             self.name = str(loaded.get("name") or self.name)
-            baseline = loaded.get("seatBaseline")
-            if isinstance(baseline, dict):
-                parsed: dict[str, int] = {}
-                for key, value in baseline.items():
-                    if re.fullmatch(r"-?\d+", str(value)):
-                        parsed[str(key)] = int(value)
-                self.seat_baseline = parsed
 
     def save_state(self) -> None:
         payload = {
             "host": self.host,
             "name": self.name,
             "model": self.model,
-            "seatBaseline": self.seat_baseline,
         }
         safe_save_state(payload)
 
@@ -353,26 +327,15 @@ class YamahaSession:
         self.enhancer = sanitize_text(root.findtext(".//Enhancer") or self.enhancer, 16)
         self.pure_direct = sanitize_text(root.findtext(".//Pure_Direct/Mode") or self.pure_direct, 16)
         self.cinema_3d = sanitize_text(root.findtext(".//_3D_Cinema_DSP") or self.cinema_3d, 16)
-        lift = root.findtext(".//Dialogue_Lift")
-        level = root.findtext(".//Dialogue_Lvl")
-        if lift is not None and re.fullmatch(r"-?\d+", lift):
-            self.dialogue_lift = max(0, min(5, int(lift)))
-        if level is not None and re.fullmatch(r"-?\d+", level):
-            self.dialogue_lvl = max(0, min(3, int(level)))
-        # Tone & Subwoofer Trim
+        # Tone controls exposed by the RX-V575.
         bass_val = root.findtext(".//Tone/Bass/Val")
         if bass_val is not None and re.fullmatch(r"-?\d+", bass_val):
             self.bass = max(-60, min(60, int(bass_val)))
         treble_val = root.findtext(".//Tone/Treble/Val")
         if treble_val is not None and re.fullmatch(r"-?\d+", treble_val):
             self.treble = max(-60, min(60, int(treble_val)))
-        subtrim_val = root.findtext(".//Subwoofer_Trim/Val")
-        if subtrim_val is not None and re.fullmatch(r"-?\d+", subtrim_val):
-            self.subwoofer_trim = max(-60, min(60, int(subtrim_val)))
 
-        # DSP Processing Toggles
-        self.extra_bass = sanitize_text(root.findtext(".//Extra_Bass") or self.extra_bass, 16)
-        self.ypao_volume = sanitize_text(root.findtext(".//YPAO_Volume") or self.ypao_volume, 16)
+        # DSP processing exposed by the RX-V575.
         self.adaptive_drc = sanitize_text(root.findtext(".//Adaptive_DRC") or self.adaptive_drc, 16)
 
         if val is not None and re.fullmatch(r"-?\d+", val):
@@ -388,68 +351,6 @@ class YamahaSession:
                     self.model = sanitize_text(model, 64)
             except Exception:
                 pass
-
-        try:
-            self.speaker_levels = self.read_speaker_levels()
-            if not self.seat_baseline:
-                self.seat_baseline = dict(self.speaker_levels)
-                self.save_state()
-            self.lr_balance = self._calc_lr_balance()
-        except Exception:
-            pass
-
-    def read_speaker_levels(self) -> dict[str, int]:
-        root = self.post(
-            "GET",
-            "<System><Speaker_Preout><Pattern_1><Lvl>GetParam</Lvl></Pattern_1></Speaker_Preout></System>",
-        )
-        levels: dict[str, int] = {}
-        level_node = root.find(".//Lvl")
-        if level_node is None:
-            return levels
-        for child in level_node:
-            val = child.findtext("Val")
-            if val is not None and re.fullmatch(r"-?\d+", val):
-                levels[child.tag] = int(val)
-        return levels
-
-    def _calc_lr_balance(self) -> int:
-        diffs: list[int] = []
-        for left, right in LR_PAIRS:
-            if left in self.speaker_levels and right in self.speaker_levels:
-                cur_l = self.speaker_levels[left]
-                cur_r = self.speaker_levels[right]
-                base_l = self.seat_baseline.get(left, 0)
-                base_r = self.seat_baseline.get(right, 0)
-                l_delta = cur_l - base_l
-                r_delta = cur_r - base_r
-                diffs.append(r_delta - l_delta)
-        if not diffs:
-            return 0
-        avg = sum(diffs) / len(diffs)
-        return max(-10, min(10, int(round(avg / 10))))
-
-    def _set_lr_balance(self, step: int) -> None:
-        step = max(-10, min(10, step))
-        delta = step * 10
-        inner: list[str] = []
-        for left, right in LR_PAIRS:
-            if left in self.speaker_levels and right in self.speaker_levels:
-                base_l = self.seat_baseline.get(left, self.speaker_levels[left])
-                base_r = self.seat_baseline.get(right, self.speaker_levels[right])
-                new_l = max(SPEAKER_LEVEL_MIN, min(SPEAKER_LEVEL_MAX, base_l - delta))
-                new_r = max(SPEAKER_LEVEL_MIN, min(SPEAKER_LEVEL_MAX, base_r + delta))
-                inner.append(f"<{left}><Val>{new_l}</Val><Exp>1</Exp><Unit>dB</Unit></{left}>")
-                inner.append(f"<{right}><Val>{new_r}</Val><Exp>1</Exp><Unit>dB</Unit></{right}>")
-        if not inner:
-            return
-        body = (
-            "<System><Speaker_Preout><Pattern_1><Lvl>"
-            + "".join(inner)
-            + "</Lvl></Pattern_1></Speaker_Preout></System>"
-        )
-        self.post("PUT", body)
-        self.lr_balance = step
 
     def status_payload(self) -> dict[str, Any]:
         status = "awake" if self.power == "On" else "standby"
@@ -468,17 +369,10 @@ class YamahaSession:
             "enhancer": sanitize_text(self.enhancer, 16),
             "pureDirect": sanitize_text(self.pure_direct, 16),
             "cinema3d": sanitize_text(self.cinema_3d, 16),
-            "dialogueLift": self.dialogue_lift,
-            "dialogueLvl": self.dialogue_lvl,
-            "lrBalance": self.lr_balance,
             "bass": f"{self.bass / 10:+.1f}",
             "bassVal": self.bass,
             "treble": f"{self.treble / 10:+.1f}",
             "trebleVal": self.treble,
-            "subTrim": f"{self.subwoofer_trim / 10:+.1f}",
-            "subTrimVal": self.subwoofer_trim,
-            "extraBass": self.extra_bass,
-            "ypaoVolume": self.ypao_volume,
             "adaptiveDrc": self.adaptive_drc,
             "connected": self.connected,
         }
@@ -526,9 +420,6 @@ class YamahaSession:
             }
             target_input = mapping.get(inp, inp)
             self.post("PUT", f"<Main_Zone><Input><Input_Sel>{target_input}</Input_Sel></Input></Main_Zone>")
-        elif action.startswith("scene-"):
-            num = action[6:]
-            self.post("PUT", f"<Main_Zone><Scene><Scene_Sel>Scene {num}</Scene_Sel></Scene></Main_Zone>")
         elif action in {"straight", "program-straight"}:
             if self.pure_direct == "On":
                 self.post("PUT", "<Main_Zone><Sound_Video><Pure_Direct><Mode>Off</Mode></Pure_Direct></Sound_Video></Main_Zone>")
@@ -563,18 +454,6 @@ class YamahaSession:
             target = "Off" if self.cinema_3d in {"Auto", "On"} else "Auto"
             self.post("PUT", f"<Main_Zone><Surround><_3D_Cinema_DSP>{target}</_3D_Cinema_DSP></Surround></Main_Zone>")
             self.cinema_3d = target
-        elif action == "dialogue-lift-up":
-            target_lift = min(5, self.dialogue_lift + 1)
-            self.post("PUT", f"<Main_Zone><Sound_Video><Dialogue_Adjust><Dialogue_Lift>{target_lift}</Dialogue_Lift></Dialogue_Adjust></Sound_Video></Main_Zone>")
-        elif action == "dialogue-lift-down":
-            target_lift = max(0, self.dialogue_lift - 1)
-            self.post("PUT", f"<Main_Zone><Sound_Video><Dialogue_Adjust><Dialogue_Lift>{target_lift}</Dialogue_Lift></Dialogue_Adjust></Sound_Video></Main_Zone>")
-        elif action == "dialogue-lvl-up":
-            target_lvl = min(3, self.dialogue_lvl + 1)
-            self.post("PUT", f"<Main_Zone><Sound_Video><Dialogue_Adjust><Dialogue_Lvl>{target_lvl}</Dialogue_Lvl></Dialogue_Adjust></Sound_Video></Main_Zone>")
-        elif action == "dialogue-lvl-down":
-            target_lvl = max(0, self.dialogue_lvl - 1)
-            self.post("PUT", f"<Main_Zone><Sound_Video><Dialogue_Adjust><Dialogue_Lvl>{target_lvl}</Dialogue_Lvl></Dialogue_Adjust></Sound_Video></Main_Zone>")
         elif action in {"bass-up", "bass-down"}:
             delta = 5 if action == "bass-up" else -5
             target = max(-60, min(60, self.bass + delta))
@@ -585,45 +464,10 @@ class YamahaSession:
             target = max(-60, min(60, self.treble + delta))
             self.post("PUT", f"<Main_Zone><Sound_Video><Tone><Treble><Val>{target}</Val><Exp>1</Exp><Unit>dB</Unit></Treble></Tone></Sound_Video></Main_Zone>")
             self.treble = target
-        elif action in {"subtrim-up", "subtrim-down", "sub-up", "sub-down"}:
-            delta = 5 if "up" in action else -5
-            target = max(-60, min(60, self.subwoofer_trim + delta))
-            self.post("PUT", f"<Main_Zone><Volume><Subwoofer_Trim><Val>{target}</Val><Exp>1</Exp><Unit>dB</Unit></Subwoofer_Trim></Volume></Main_Zone>")
-            self.subwoofer_trim = target
-        elif action in {"extra-bass-toggle", "extrabass-toggle", "extra-bass"}:
-            target = "Off" if self.extra_bass == "Auto" else "Auto"
-            self.post("PUT", f"<Main_Zone><Sound_Video><Extra_Bass>{target}</Extra_Bass></Sound_Video></Main_Zone>")
-            self.extra_bass = target
-        elif action in {"ypao-volume-toggle", "ypao-vol-toggle", "ypaovol-toggle", "ypao-vol"}:
-            target = "Off" if self.ypao_volume == "Auto" else "Auto"
-            self.post("PUT", f"<Main_Zone><Sound_Video><YPAO_Volume>{target}</YPAO_Volume></Sound_Video></Main_Zone>")
-            self.ypao_volume = target
         elif action in {"adaptive-drc-toggle", "adaptivedrc-toggle", "adaptive-drc"}:
             target = "Off" if self.adaptive_drc == "Auto" else "Auto"
             self.post("PUT", f"<Main_Zone><Sound_Video><Adaptive_DRC>{target}</Adaptive_DRC></Sound_Video></Main_Zone>")
             self.adaptive_drc = target
-        elif action == "seat-left":
-            self._set_lr_balance(self.lr_balance - 1)
-        elif action == "seat-right":
-            self._set_lr_balance(self.lr_balance + 1)
-        elif action == "seat-center":
-            self._set_lr_balance(0)
-        elif action == "capture-baseline":
-            self.seat_baseline = self.read_speaker_levels()
-            self.save_state()
-        elif action == "restore-baseline":
-            if self.seat_baseline:
-                inner = [
-                    f"<{k}><Val>{v}</Val><Exp>1</Exp><Unit>dB</Unit></{k}>"
-                    for k, v in self.seat_baseline.items()
-                ]
-                body = (
-                    "<System><Speaker_Preout><Pattern_1><Lvl>"
-                    + "".join(inner)
-                    + "</Lvl></Pattern_1></Speaker_Preout></System>"
-                )
-                self.post("PUT", body)
-                self.lr_balance = 0
         else:
             raise ValueError(f"Unknown action: {action[:32]}")
         self.refresh()
@@ -631,46 +475,6 @@ class YamahaSession:
 
     def handle_request(self, request: dict[str, Any]) -> None:
         operation = str(request.get("op", ""))[:32]
-        if operation in {"seat", "seat-pos"}:
-            x = int(request.get("x", 0))
-            y = int(request.get("y", 0))
-            x = max(-10, min(10, x))
-            y = max(0, min(5, y))
-            if "y" in request:
-                self.post(
-                    "PUT",
-                    "<Main_Zone><Sound_Video><Dialogue_Adjust>"
-                    f"<Dialogue_Lift>{y}</Dialogue_Lift>"
-                    "</Dialogue_Adjust></Sound_Video></Main_Zone>",
-                )
-            self._set_lr_balance(x)
-            self.refresh()
-            emit("result", action=operation, result=f"{x},{y}", **self.status_payload())
-            return
-        if operation == "set-dialogue-lvl":
-            lvl = max(0, min(3, int(request.get("value", 0))))
-            self.post(
-                "PUT",
-                "<Main_Zone><Sound_Video><Dialogue_Adjust>"
-                f"<Dialogue_Lvl>{lvl}</Dialogue_Lvl>"
-                "</Dialogue_Adjust></Sound_Video></Main_Zone>",
-            )
-            self.dialogue_lvl = lvl
-            self.refresh()
-            emit("result", action=operation, result=str(lvl), **self.status_payload())
-            return
-        if operation == "set-dialogue-lift":
-            lift = max(0, min(5, int(request.get("value", 0))))
-            self.post(
-                "PUT",
-                "<Main_Zone><Sound_Video><Dialogue_Adjust>"
-                f"<Dialogue_Lift>{lift}</Dialogue_Lift>"
-                "</Dialogue_Adjust></Sound_Video></Main_Zone>",
-            )
-            self.dialogue_lift = lift
-            self.refresh()
-            emit("result", action=operation, result=str(lift), **self.status_payload())
-            return
         if operation == "set-bass":
             val = max(-60, min(60, int(request.get("value", 0))))
             self.post(
@@ -692,18 +496,6 @@ class YamahaSession:
                 "</Treble></Tone></Sound_Video></Main_Zone>",
             )
             self.treble = val
-            self.refresh()
-            emit("result", action=operation, result=str(val), **self.status_payload())
-            return
-        if operation == "set-subtrim":
-            val = max(-60, min(60, int(request.get("value", 0))))
-            self.post(
-                "PUT",
-                "<Main_Zone><Volume><Subwoofer_Trim>"
-                f"<Val>{val}</Val><Exp>1</Exp><Unit>dB</Unit>"
-                "</Subwoofer_Trim></Volume></Main_Zone>",
-            )
-            self.subwoofer_trim = val
             self.refresh()
             emit("result", action=operation, result=str(val), **self.status_payload())
             return

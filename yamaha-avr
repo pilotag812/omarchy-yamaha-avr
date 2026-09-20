@@ -14,9 +14,8 @@ usage() {
 Usage: yamaha-avr [--host HOST] [--name NAME] ACTION
 
   power mute volume-up volume-down status
-  input-hdmi1 .. input-hdmi5
-  scene-1 .. scene-4
-  straight pure-direct program-7ch
+  input-av1 input-av6
+  straight program-7ch
   session
 
 YNCA HTTP remote for Yamaha RX-V / RX-A receivers (tested on RX-V677).
