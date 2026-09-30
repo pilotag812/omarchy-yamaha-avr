@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.bjarkimg.yamaha-avr",
   "name": "Yamaha AVR",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "Bjarki Már",
   "license": "MIT",
-  "description": "Bar remote for Yamaha RX-V575 over YNCA with AV1/AV6, DLNA media browsing, playback, tone controls, and DSP modes.",
+  "description": "Bar remote for Yamaha RX-V575 over YNCA with configurable inputs, smooth DLNA media browsing, playback, tone controls, and DSP modes.",
   "homepage": "https://github.com/pilotag812/omarchy-yamaha-avr",
   "repository": "https://github.com/pilotag812/omarchy-yamaha-avr",
   "keywords": [

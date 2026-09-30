@@ -1,146 +1,123 @@
-# Yamaha AVR для Omarchy
+# Yamaha AVR for Omarchy
 
-Пульт управления с клавиатуры для панели Omarchy Quattro. Плагин работает через
-**YNCA** — HTTP XML-протокол Yamaha на порту 80, который использовался старым
-мобильным приложением AV Controller для ресиверов 2010–2014 годов.
+A keyboard-friendly remote for Yamaha AV receivers in the Omarchy Quattro bar.
+It communicates over Yamaha Network Control (YNCA), the receiver's HTTP XML API.
 
-Это **не** MusicCast. Если открывается адрес
-`http://РЕСИВЕР/YamahaRemoteControl/desc.xml`, плагин сможет подключиться к
-ресиверу.
+[English](#english) · [Русский](#русский)
 
-![Пульт Yamaha AVR для панели Omarchy на RX-V677](preview.png)
+## English
 
-## Поддерживаемые устройства
+### Features
 
-Поддерживаются устройства с HTTP API **Yamaha Network Control**
-(`/YamahaRemoteControl/ctrl`). Обычно это ресиверы серий **RX-V**, **RX-A
-(AVENTAGE)** и **HTR**, выпущенные в 2010–2014 годах. Более новые модели с
-MusicCast нередко также предоставляют YNCA, однако плагин использует только этот
-старый API.
+- Power, mute, volume in 0.5 dB steps, and four quick volume presets: −60, −50, −45, and −40 dB.
+- Receiver inputs on the main remote can be chosen in **INPUTS**. The available inputs are read from the receiver; AV1, AV6, and SERVER are selected by default.
+- The **SERVER** view loads every item in the current DLNA folder automatically, eight items at a time. The list scrolls locally, so moving through a loaded folder does not send a command for each step.
+- Folder and track selection, playback controls, repeat, shuffle, and now-playing metadata.
+- Straight and 7ch Stereo modes; bass, treble, Adaptive DRC, Enhancer, and Cinema DSP 3D controls.
 
-### Модели RX-V / RX-A с поддержкой YNCA по годам
+### Compatibility and requirements
 
-| Год | RX-V | AVENTAGE | Другие |
-| --- | --- | --- | --- |
-| 2014 | RX-V477, RX-V677, RX-V777, RX-V1077, RX-V2077, RX-V3077 | RX-A740, RX-A840, RX-A1040, RX-A2040, RX-A3040 | |
-| 2013 | RX-V475, RX-V575, RX-V675, RX-V775, RX-V1075, RX-V2075, RX-V3075 | RX-A730–A3030 | HTR-4066 |
-| 2012 | RX-V473, RX-V573, RX-V673, RX-V773 | RX-A720–A3020 | HTR-4065, HTR-7065 |
-| 2011 | RX-V671, RX-V771, RX-V871, RX-V1071, RX-V2071, RX-V3071 | RX-A710–A3010 | HTR-6064 |
-| 2010 | RX-V867, RX-V1067, RX-V2067, RX-V3067 | RX-A700–A3000 | HTR-8063 |
+The receiver must expose Yamaha Network Control at `/YamahaRemoteControl/ctrl`.
+You can check whether `http://RECEIVER_IP/YamahaRemoteControl/desc.xml` responds in a browser. The plugin has been used with Yamaha RX-V575 and RX-V677. Other RX-V, RX-A, and HTR models may expose the same API, but their available inputs and audio controls can differ. MusicCast-only devices using `/YamahaExtendedControl/` are not supported.
 
-### Проверенные модели
+You need Omarchy Quattro, Python 3.10 or newer (standard library only), and a receiver reachable on your private IPv4 LAN. Enable **Network Standby** on the receiver if you want to reach it while it is in standby.
 
-- Yamaha **RX-V575** (2013 год, 7.2)
-- Yamaha **RX-V677** (2014 год, 7.2; исходная модель для разработки)
-
-### Что не поддерживается
-
-| Устройство | Причина |
-| --- | --- |
-| Колонки MusicCast, серии WX/WX, MusicCast 20/50 | Другой API (`/YamahaExtendedControl/`) |
-| RX-V6A / RX-A2A / RX-A4A и похожие модели 2020 года и новее | Рекомендуется MusicCast; YNCA может отвечать, но не проверен |
-| Ресиверы других производителей | Не поддерживаются |
-
-## Возможности
-
-- Виджет **AV** на панели
-- Включение и выключение питания, отключение звука и регулировка громкости
-  (абсолютные значения в дБ на RX-V575/RX-V677; `Val=Up` отклоняется ресивером)
-- Быстрые уровни громкости: **-60 дБ** (ночь), **-50 дБ** (тихо), **-45 дБ**
-  (телевизор), **-40 дБ** (обычный режим/фильмы)
-- Прямой выбор входов AV1, AV6 и SERVER
-- Навигация по медиатеке DLNA, отображение метаданных текущего трека, управление
-  воспроизведением, повтором и перемешиванием
-- Режимы Straight и 7ch Stereo
-- Отдельный экран **Настройки звука**:
-  - регулировка тембра **низких и высоких частот** от -6,0 до +6,0 дБ с шагом
-    0,5 дБ и быстрым сбросом на 0 дБ
-  - переключатели обработки **DSP**: Adaptive DRC, Enhancer и Cinema DSP 3D
-
-## Требования
-
-- Omarchy Quattro
-- Python 3.9 или новее (только стандартная библиотека — без pip и venv)
-- Ресивер Yamaha в локальной сети; чтобы подключаться к нему в режиме ожидания,
-  включите Network Standby
-
-Плагин запускается внутри `omarchy-shell` без песочницы. Перед установкой
-рекомендуется проверить содержимое репозитория.
-
-## Установка
+### Install and set up
 
 ```bash
 omarchy plugin add https://github.com/pilotag812/omarchy-yamaha-avr.git --enable
 ```
 
-Откройте виджет **AV**, нажмите **D**, введите IP-адрес ресивера и подключитесь.
-Сетевое имя будет получено от ресивера после первого успешного GET-запроса.
+Open the **AV** widget, press **D**, enter the receiver's IP address, and connect. Open **INPUTS** (or press **I**) to tick the sources you want on the main remote. The selection and receiver address are saved locally.
 
-## Управление
+### Controls
 
-| Клавиша | Действие |
-| --- | --- |
-| O | Включить питание |
-| X | Выключить питание / перевести в режим ожидания |
-| P | Переключить питание; на экране медиатеки — воспроизведение/остановка |
-| M | Включить или отключить звук |
-| - / + | Изменить громкость |
-| 1 | Выбрать AV1 |
-| 6 | Выбрать AV6 |
-| E | Открыть медиатеку SERVER |
-| S | Включить Straight |
-| 7 | Включить 7ch Stereo |
-| A | Открыть настройки звука |
-| D | Открыть настройки адреса ресивера |
-| B | Вернуться к пульту с экрана звука, адреса или медиатеки |
-| Q или Escape | Закрыть окно / вернуться назад |
+| Key | Main remote | SERVER view |
+| --- | --- | --- |
+| O / X / P | Power on / standby / toggle | Stop (X) / play or stop (P) |
+| M | Toggle mute | — |
+| − / + | Volume down / up | — |
+| 1 / 6 | Select AV1 / AV6 | — |
+| E | Open SERVER | Open selected folder or track |
+| W / S | — | Move selection in the loaded list |
+| H / G | — | Back / home in the media library |
+| V / N | — | Previous / next track |
+| R | — | Reload the current folder |
+| A / I / D | Audio controls / input selection / receiver address | — |
+| S / 7 | Straight / 7ch Stereo | — |
+| B | Return to the main remote from another view | Return to the main remote |
+| Q / Escape | Close the panel | Return to the main remote |
 
-- **Виджет AV на панели:** щелчок левой кнопкой открывает или закрывает окно;
-  щелчок правой или средней кнопкой переключает питание ресивера.
-- **Кнопки пульта:** отдельные кнопки **ON**, **OFF** и **MUTE** с подсветкой
-  активного состояния.
-- **Выбор входа:** прямое переключение между AV1, AV6 и SERVER.
-- **Экран медиатеки:** навигация по папкам DLNA, быстрый переход по длинным
-  спискам с помощью вертикального ползунка, выбор и подсветка текущего трека,
-  переход к предыдущему или следующему треку, воспроизведение/остановка,
-  повтор и перемешивание.
-- **Экран звука:** регулировка низких и высоких частот, а также переключатели
-  Adaptive DRC, Enhancer и Cinema DSP 3D.
+The SERVER view also has buttons for repeat and shuffle. Left-click the **AV** bar widget to open or close the panel; right-click or middle-click it to toggle receiver power.
 
-## Обновление
+### Update, remove, and validate
 
 ```bash
 omarchy plugin update io.github.bjarkimg.yamaha-avr
-```
-
-## Удаление
-
-```bash
+omarchy plugin validate ~/.config/omarchy/plugins/io.github.bjarkimg.yamaha-avr
 omarchy plugin remove io.github.bjarkimg.yamaha-avr
 ```
 
-При необходимости удалите сохранённый адрес ресивера:
+The receiver address and selected inputs are stored in `${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/settings/yamaha-avr.json`. Removing the plugin does not remove this file automatically.
+
+## Русский
+
+### Возможности
+
+- Питание, отключение звука, регулировка громкости с шагом 0,5 дБ и четыре быстрых уровня: −60, −50, −45 и −40 дБ.
+- Источники на главном экране выбираются галочками в разделе **INPUTS**. Список доступных входов плагин получает от ресивера. По умолчанию выбраны AV1, AV6 и SERVER.
+- Экран **SERVER** автоматически загружает все элементы текущей папки DLNA порциями по восемь. Уже загруженный список прокручивается локально, без команды ресиверу на каждый шаг.
+- Открытие папок и треков, управление воспроизведением, повтором и перемешиванием, отображение текущего трека.
+- Режимы Straight и 7ch Stereo; настройки низких и высоких частот, Adaptive DRC, Enhancer и Cinema DSP 3D.
+
+### Совместимость и требования
+
+Ресивер должен поддерживать Yamaha Network Control по адресу `/YamahaRemoteControl/ctrl`. Проверить это можно, открыв в браузере `http://IP_РЕСИВЕРА/YamahaRemoteControl/desc.xml`. Плагин использовался с Yamaha RX-V575 и RX-V677. У других моделей RX-V, RX-A и HTR может быть тот же API, но набор входов и звуковых настроек может отличаться. Устройства, работающие только через MusicCast API `/YamahaExtendedControl/`, не поддерживаются.
+
+Нужны Omarchy Quattro, Python 3.10 или новее (только стандартная библиотека) и ресивер, доступный в частной сети IPv4. Чтобы ресивер отвечал в режиме ожидания, включите на нём **Network Standby**.
+
+### Установка и настройка
 
 ```bash
-rm -f "${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/settings/yamaha-avr.json"
+omarchy plugin add https://github.com/pilotag812/omarchy-yamaha-avr.git --enable
 ```
 
-## Разработка
+Откройте виджет **AV**, нажмите **D**, введите IP-адрес ресивера и подключитесь. В разделе **INPUTS** (клавиша **I**) отметьте источники, которые нужно показывать на главном экране. Адрес ресивера и выбор источников сохраняются локально.
+
+### Управление
+
+| Клавиша | Главный экран | Экран SERVER |
+| --- | --- | --- |
+| O / X / P | Включить / перевести в режим ожидания / переключить питание | Остановить (X) / воспроизвести или остановить (P) |
+| M | Включить или отключить звук | — |
+| − / + | Уменьшить / увеличить громкость | — |
+| 1 / 6 | Выбрать AV1 / AV6 | — |
+| E | Открыть SERVER | Открыть выбранную папку или трек |
+| W / S | — | Переместить выделение по загруженному списку |
+| H / G | — | Назад / в начало медиатеки |
+| V / N | — | Предыдущий / следующий трек |
+| R | — | Обновить текущую папку |
+| A / I / D | Настройки звука / выбор входов / адрес ресивера | — |
+| S / 7 | Режим Straight / 7ch Stereo | — |
+| B | Вернуться на главный экран | Вернуться на главный экран |
+| Q / Escape | Закрыть панель | Вернуться на главный экран |
+
+На экране SERVER есть отдельные кнопки повтора и перемешивания. Щелчок левой кнопкой по виджету **AV** открывает или закрывает панель; щелчок правой или средней кнопкой переключает питание ресивера.
+
+### Обновление, удаление и проверка
 
 ```bash
-omarchy plugin validate .
+omarchy plugin update io.github.bjarkimg.yamaha-avr
+omarchy plugin validate ~/.config/omarchy/plugins/io.github.bjarkimg.yamaha-avr
+omarchy plugin remove io.github.bjarkimg.yamaha-avr
 ```
 
-## Благодарности
+Адрес ресивера и выбранные входы хранятся в `${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/settings/yamaha-avr.json`. При удалении плагина этот файл остаётся.
 
-Дизайн панели и сеанса основан на плагинах Томаса Эванса
-[Apple TV Remote for Omarchy](https://github.com/teevans/omarchy-apple-tv-remote)
-и [Android TV Remote](https://github.com/bjarkimg/omarchy-android-tv-remote) из
-этой серии.
+## Credits / Благодарности
 
-Yamaha, YNCA, MusicCast, YPAO и CINEMA DSP являются товарными знаками Yamaha
-Corporation.
+The panel and session design draws on [Apple TV Remote for Omarchy](https://github.com/teevans/omarchy-apple-tv-remote) and [Android TV Remote](https://github.com/bjarkimg/omarchy-android-tv-remote). / Дизайн панели и сеанса основан на этих проектах.
 
-## Лицензия
+Yamaha, YNCA, MusicCast, YPAO, and CINEMA DSP are trademarks of Yamaha Corporation. / Указанные названия являются товарными знаками Yamaha Corporation.
 
-[MIT](LICENSE)
+Licensed under [MIT](LICENSE). / Лицензия — [MIT](LICENSE).

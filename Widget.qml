@@ -44,7 +44,15 @@ BarWidget {
   property int serverMenuLayer: 1
   property int serverCurrentLine: 0
   property int serverMaxLine: 0
-  property var serverLines: []
+  property int serverListTotal: 0
+  property int serverListLoaded: 0
+  property bool serverListLoading: false
+  property string serverListError: ""
+  property int serverSelectedIndex: -1
+  property var inputChoices: []
+  property var visibleInputs: ["AV1", "AV6", "SERVER"]
+
+  ListModel { id: serverItems }
 
   readonly property string deviceName: String(setting("deviceName", "Yamaha AVR"))
   readonly property string host: String(setting("host", ""))
@@ -62,9 +70,41 @@ BarWidget {
     actionQueue = []
   }
 
+  function moveServerSelection(offset) {
+    if (serverItems.count === 0) return
+    serverSelectedIndex = Math.max(0, Math.min(serverItems.count - 1, serverSelectedIndex + offset))
+    serverList.positionViewAtIndex(serverSelectedIndex, ListView.Contain)
+  }
+
+  function openServerLine(line, index) {
+    if (!line) return
+    serverSelectedIndex = index
+    sendAction("server-open-" + line.line)
+  }
+
+  function visibleInputChoices() {
+    return inputChoices.filter(function(choice) { return visibleInputs.indexOf(choice.id) >= 0 })
+  }
+
+  function selectInput(choice) {
+    if (!choice) return
+    if (String(choice.id).toUpperCase() === "SERVER") viewMode = "server"
+    sendRequest({ "op": "set-input", "value": choice.id })
+  }
+
+  function toggleVisibleInput(value) {
+    var next = visibleInputs.slice()
+    var index = next.indexOf(value)
+    if (index >= 0) next.splice(index, 1)
+    else next.push(value)
+    if (sendRequest({ "op": "set-visible-inputs", "values": next })) visibleInputs = next
+  }
+
   function applyStatus(message) {
     if (message.name) activeName = String(message.name)
     if (message.host) activeHost = String(message.host)
+    if (message.inputChoices) inputChoices = message.inputChoices
+    if (message.visibleInputs) visibleInputs = message.visibleInputs
     power = String(message.power || power)
     muted = String(message.mute || "").toLowerCase() === "on"
     inputSel = String(message.input || inputSel)
@@ -90,7 +130,6 @@ BarWidget {
     serverMenuLayer = Number(message.serverMenuLayer || 1)
     serverCurrentLine = Number(message.serverCurrentLine || 0)
     serverMaxLine = Number(message.serverMaxLine || 0)
-    serverLines = message.serverLines || []
     if (message.volumeDb !== undefined && message.volumeDb !== null && message.volumeDb !== "") {
       volumeDb = Number(message.volumeDb)
       volumeLabel = Number(message.volumeDb).toFixed(1) + " dB"
@@ -150,6 +189,39 @@ BarWidget {
     var message
     try { message = JSON.parse(String(line || "")) } catch (error) { return }
 
+    if (message.event === "server-list-reset") {
+      serverItems.clear()
+      serverListTotal = Number(message.total || 0)
+      serverListLoaded = 0
+      serverListLoading = serverListTotal > 0
+      serverListError = ""
+      serverSelectedIndex = -1
+      serverList.contentY = 0
+      serverMenuName = String(message.menuName || "Media Server")
+      return
+    }
+    if (message.event === "server-list-page") {
+      var entries = message.entries || []
+      for (var i = 0; i < entries.length; i++) serverItems.append(entries[i])
+      serverListLoaded = Number(message.loaded || serverItems.count)
+      if (serverSelectedIndex < 0 && serverItems.count > 0) serverSelectedIndex = 0
+      return
+    }
+    if (message.event === "server-list-done") {
+      serverListLoading = false
+      return
+    }
+    if (message.event === "server-list-error") {
+      serverListLoading = false
+      serverListError = String(message.message || "Could not load media list")
+      return
+    }
+    if (message.event === "settings") {
+      inputChoices = message.inputChoices || inputChoices
+      visibleInputs = message.visibleInputs || visibleInputs
+      return
+    }
+
     if (message.event === "ready" || message.event === "switched") {
       sessionReady = true
       processError = ""
@@ -173,7 +245,7 @@ BarWidget {
 
   function handleTextKey(text) {
     var key = String(text || "").toLowerCase()
-    if (viewMode === "devices" || viewMode === "audio" || viewMode === "server") {
+    if (viewMode === "devices" || viewMode === "audio" || viewMode === "server" || viewMode === "settings") {
       if (key === "b" || key === "q") { viewMode = "remote"; return }
       if (viewMode === "audio") {
         if (key === "d") sendAction("adaptive-drc-toggle")
@@ -181,14 +253,15 @@ BarWidget {
         else if (key === "c") sendAction("cinema3d-toggle")
         return
       }
+      if (viewMode === "settings") return
       if (viewMode === "server") {
         if (key === "p") sendAction(serverPlayback.toLowerCase() === "play" ? "server-stop" : "server-play")
         else if (key === "x") sendAction("server-stop")
         else if (key === "n") sendAction("server-next")
         else if (key === "v") sendAction("server-previous")
-        else if (key === "w") sendAction("server-up")
-        else if (key === "s") sendAction("server-down")
-        else if (key === "e") sendAction("server-select")
+        else if (key === "w") moveServerSelection(-1)
+        else if (key === "s") moveServerSelection(1)
+        else if (key === "e" && serverSelectedIndex >= 0) openServerLine(serverItems.get(serverSelectedIndex), serverSelectedIndex)
         else if (key === "h") sendAction("server-back")
         else if (key === "g") sendAction("server-home")
         else if (key === "r") sendAction("server-refresh")
@@ -204,10 +277,15 @@ BarWidget {
     else if (key === "-" || key === "_") sendAction("volume-down")
     else if (key === "1") sendAction("input-av1")
     else if (key === "6") sendAction("input-av6")
-    else if (key === "e") { viewMode = "server"; sendAction("input-server") }
+    else if (key === "e") {
+      var serverChoice = inputChoices.filter(function(choice) { return String(choice.id).toUpperCase() === "SERVER" })[0]
+      if (serverChoice) selectInput(serverChoice)
+      else { viewMode = "server"; sendAction("input-server") }
+    }
     else if (key === "s") sendAction("straight")
     else if (key === "7") sendAction("program-7ch")
     else if (key === "a") viewMode = "audio"
+    else if (key === "i") viewMode = "settings"
     else if (key === "d") {
       hostInput.text = root.activeHost
       nameInput.text = root.activeName
@@ -577,12 +655,26 @@ BarWidget {
             }
           }
 
-          Row {
-            anchors.horizontalCenter: parent.horizontalCenter
+          Flow {
+            width: parent.width
             spacing: Style.space(7)
-            RemoteKey { action: "input-av1"; text: "AV1"; on: root.inputSel.toUpperCase() === "AV1"; keyWidth: 92 }
-            RemoteKey { action: "input-av6"; text: "AV6"; on: root.inputSel.toUpperCase() === "AV6"; keyWidth: 92 }
-            RemoteKey { action: "input-server"; targetView: "server"; text: "SERVER"; on: root.inputSel.toUpperCase() === "SERVER"; keyWidth: 92 }
+            Repeater {
+              model: root.visibleInputChoices()
+              Button {
+                required property var modelData
+                width: 92
+                height: 38
+                text: modelData.title
+                tooltipText: modelData.title
+                selected: root.inputSel === modelData.id
+                foreground: root.foreground
+                accent: root.accent
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                bordered: true
+                onClicked: root.selectInput(modelData)
+              }
+            }
           }
 
           Row {
@@ -590,7 +682,21 @@ BarWidget {
             spacing: Style.space(7)
 
             Button {
-              width: 142
+              width: 92
+              height: 38
+              text: "INPUTS"
+              iconText: "󰓃"
+              tooltipText: "Choose receiver inputs shown on the remote"
+              foreground: root.foreground
+              accent: root.accent
+              fontFamily: root.fontFamily
+              fontSize: Style.font.bodySmall
+              bordered: true
+              onClicked: root.viewMode = "settings"
+            }
+
+            Button {
+              width: 92
               height: 38
               text: "AUDIO"
               iconText: "󰓃"
@@ -604,7 +710,7 @@ BarWidget {
             }
 
             Button {
-              width: 142
+              width: 92
               height: 38
               text: "HOST"
               iconText: "󰒋"
@@ -639,7 +745,7 @@ BarWidget {
             width: parent.width
             wrapMode: Text.Wrap
             horizontalAlignment: Text.AlignHCenter
-            text: "[1] AV1  [6] AV6  [E] SERVER  [A] AUDIO  [D] HOST"
+            text: "[I] INPUTS  [A] AUDIO  [D] HOST"
             textFormat: Text.PlainText
             color: root.dim
             font.family: root.fontFamily
@@ -712,9 +818,8 @@ BarWidget {
 
           Text {
             width: parent.width
-            text: root.serverMenuName + "  ·  "
-              + (serverSeek.dragging ? Math.round(serverSeek.liveValue) : root.serverCurrentLine)
-              + "/" + root.serverMaxLine
+            text: root.serverMenuName + "  ·  " + root.serverListLoaded + "/" + root.serverListTotal
+              + (root.serverListLoading ? "  LOADING" : "")
             textFormat: Text.PlainText
             color: root.dim
             font.family: root.fontFamily
@@ -723,68 +828,42 @@ BarWidget {
             elide: Text.ElideRight
           }
 
-          Row {
+          ListView {
+            id: serverList
             width: parent.width
-            spacing: serverSeekRail.visible ? Style.space(6) : 0
-
-            Column {
-              id: serverList
-              width: parent.width - serverSeekRail.width - parent.spacing
-              spacing: Style.space(8)
-
-              Repeater {
-                model: root.serverLines
-                Button {
-                  required property var modelData
-                  readonly property bool currentTrack: modelData.attribute === "Item"
-                    && modelData.text === root.serverSong
-                  width: serverList.width
-                  height: 32
-                  text: (modelData.attribute === "Container" ? "▸ "
-                    : (currentTrack ? (root.serverPlayback.toLowerCase() === "play" ? "▶ " : "Ⅱ ") : "♪ "))
-                    + modelData.text
-                  tooltipText: modelData.text
-                  selected: currentTrack
-                  foreground: root.foreground
-                  accent: root.accent
-                  fontFamily: root.fontFamily
-                  fontSize: Style.font.caption
-                  bordered: true
-                  onClicked: root.sendAction("server-line-" + modelData.index)
-                }
-              }
-            }
-
-            Item {
-              id: serverSeekRail
-              visible: root.serverMaxLine > 1
-              width: visible ? Style.space(24) : 0
-              height: Math.max(32, serverList.implicitHeight)
-
-              PanelSlider {
-                id: serverSeek
-                anchors.centerIn: parent
-                width: serverSeekRail.height
-                height: serverSeekRail.width
-                rotation: 90
-                bar: root.bar
-                minimum: 1
-                maximum: Math.max(1, root.serverMaxLine)
-                step: 8
-                integer: true
-                value: Math.max(1, root.serverCurrentLine)
-                onReleased: function(value) {
-                  root.sendAction("server-jump-" + Math.round(value))
-                }
-              }
+            height: 260
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            spacing: Style.space(6)
+            model: serverItems
+            delegate: Button {
+              required property int index
+              required property int line
+              required property string label
+              required property string attribute
+              readonly property bool currentTrack: attribute === "Item"
+                && label === root.serverSong
+              width: serverList.width
+              height: 32
+              text: (attribute === "Container" ? "▸ "
+                : (currentTrack ? (root.serverPlayback.toLowerCase() === "play" ? "▶ " : "Ⅱ ") : "♪ "))
+                + label
+              tooltipText: label
+              selected: currentTrack || index === root.serverSelectedIndex
+              foreground: root.foreground
+              accent: root.accent
+              fontFamily: root.fontFamily
+              fontSize: Style.font.caption
+              bordered: true
+              onClicked: root.openServerLine({ "line": line }, index)
             }
           }
 
           Text {
-            visible: root.serverLines.length === 0
+            visible: serverItems.count === 0
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
-            text: "No items in this folder"
+            text: root.serverListLoading ? "Loading folder..." : "No items in this folder"
             textFormat: Text.PlainText
             color: root.dim
             font.family: root.fontFamily
@@ -794,11 +873,20 @@ BarWidget {
           Row {
             anchors.horizontalCenter: parent.horizontalCenter
             spacing: Style.space(5)
-            RemoteKey { action: "server-home"; text: "HOME"; keyWidth: 54; keyHeight: 32; fontSize: Style.font.caption }
-            RemoteKey { action: "server-back"; text: "BACK"; keyWidth: 54; keyHeight: 32; fontSize: Style.font.caption }
-            RemoteKey { action: "server-page-up"; text: "PG↑"; keyWidth: 54; keyHeight: 32; fontSize: Style.font.caption }
-            RemoteKey { action: "server-page-down"; text: "PG↓"; keyWidth: 54; keyHeight: 32; fontSize: Style.font.caption }
-            RemoteKey { action: "server-refresh"; text: "REF"; keyWidth: 54; keyHeight: 32; fontSize: Style.font.caption }
+            RemoteKey { action: "server-home"; text: "HOME"; keyWidth: 92; keyHeight: 32; fontSize: Style.font.caption }
+            RemoteKey { action: "server-back"; text: "BACK"; keyWidth: 92; keyHeight: 32; fontSize: Style.font.caption }
+            RemoteKey { action: "server-refresh"; text: "REF"; keyWidth: 92; keyHeight: 32; fontSize: Style.font.caption }
+          }
+
+          Text {
+            visible: root.serverListError !== ""
+            width: parent.width
+            text: root.serverListError
+            textFormat: Text.PlainText
+            color: root.accent
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.Wrap
           }
 
           Button {
@@ -818,12 +906,108 @@ BarWidget {
           Text {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
-            text: "[P] PLAY/STOP  [V/N] PREV/NEXT  [B] REMOTE"
+            text: "[W/S] BROWSE  [E] OPEN  [H] BACK  [G] HOME  [B] REMOTE"
             textFormat: Text.PlainText
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
             wrapMode: Text.Wrap
+          }
+        }
+
+        Column {
+          visible: root.viewMode === "settings"
+          width: parent.width
+          spacing: Style.space(8)
+
+          Text {
+            width: parent.width
+            text: "INPUTS ON REMOTE"
+            textFormat: Text.PlainText
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            font.bold: true
+          }
+
+          Text {
+            width: parent.width
+            text: root.inputChoices.length > 0
+              ? "Choose which receiver inputs appear on the main remote."
+              : "Connect the receiver to load its available inputs."
+            textFormat: Text.PlainText
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.Wrap
+          }
+
+          ListView {
+            id: inputSettingsList
+            width: parent.width
+            height: 280
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            spacing: Style.space(4)
+            model: root.inputChoices
+            delegate: Item {
+              id: inputChoiceRow
+              required property var modelData
+              width: inputSettingsList.width
+              height: 34
+              readonly property bool checked: root.visibleInputs.indexOf(modelData.id) >= 0
+
+              Rectangle {
+                id: inputCheck
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                width: 20
+                height: 20
+                radius: 4
+                color: inputChoiceRow.checked ? root.accent : "transparent"
+                border.width: 1
+                border.color: inputChoiceRow.checked ? root.accent : root.dim
+                Text {
+                  anchors.centerIn: parent
+                  text: inputChoiceRow.checked ? "✓" : ""
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                }
+              }
+
+              Text {
+                anchors.left: inputCheck.right
+                anchors.leftMargin: Style.space(8)
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width - inputCheck.width - Style.space(8)
+                text: inputChoiceRow.modelData.title
+                textFormat: Text.PlainText
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                elide: Text.ElideRight
+              }
+
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.toggleVisibleInput(inputChoiceRow.modelData.id)
+              }
+            }
+          }
+
+          Button {
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: 291
+            height: 38
+            text: "BACK TO REMOTE"
+            foreground: root.foreground
+            accent: root.accent
+            fontFamily: root.fontFamily
+            fontSize: Style.font.bodySmall
+            bordered: true
+            onClicked: root.viewMode = "remote"
           }
         }
 

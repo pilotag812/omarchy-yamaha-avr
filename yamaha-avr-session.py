@@ -9,11 +9,13 @@ import html
 import ipaddress
 import json
 import os
+import queue
 import re
 import secrets
 import socket
 import stat
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -271,6 +273,13 @@ class YamahaSession:
         self.server_current_line = 0
         self.server_max_line = 0
         self.server_lines: list[dict[str, Any]] = []
+        self.server_scan_next = 0
+        self.server_scan_origin = 1
+        self.server_scan_menu = ""
+        self.server_scan_layer = 1
+        self.server_scan_items: dict[int, str] = {}
+        self.input_choices: list[dict[str, str]] = []
+        self.visible_inputs = ["AV1", "AV6", "SERVER"]
         self.load_state()
 
     def load_state(self) -> None:
@@ -278,12 +287,19 @@ class YamahaSession:
         if isinstance(loaded, dict):
             self.host = str(loaded.get("host") or self.host)
             self.name = str(loaded.get("name") or self.name)
+            selected = loaded.get("visibleInputs")
+            if isinstance(selected, list):
+                self.visible_inputs = [
+                    value for value in selected[:32]
+                    if isinstance(value, str) and re.fullmatch(r"[\w ()-]{1,32}", value)
+                ]
 
     def save_state(self) -> None:
         payload = {
             "host": self.host,
             "name": self.name,
             "model": self.model,
+            "visibleInputs": self.visible_inputs,
         }
         safe_save_state(payload)
 
@@ -366,6 +382,20 @@ class YamahaSession:
             except Exception:
                 pass
 
+        if not self.input_choices:
+            try:
+                choices_root = self.post("GET", "<Main_Zone><Input><Input_Sel_Item>GetParam</Input_Sel_Item></Input></Main_Zone>")
+                self.input_choices = []
+                for item in choices_root.findall(".//Input_Sel_Item/*"):
+                    value = sanitize_text(item.findtext("Param"), 32)
+                    title = sanitize_text(item.findtext("Title") or value, 32)
+                    if value and re.fullmatch(r"[\w ()-]{1,32}", value):
+                        self.input_choices.append({"id": value, "title": title or value})
+            except Exception:
+                pass
+            if not self.input_choices:
+                self.input_choices = [{"id": value, "title": value} for value in ("AV1", "AV6", "SERVER")]
+
         if self.input_sel.upper() == "SERVER":
             self.refresh_server()
 
@@ -387,6 +417,9 @@ class YamahaSession:
         self.server_song = sanitize_text(play_root.findtext(".//SERVER/Play_Info/Meta_Info/Song"), 128)
 
         list_root = self.post("GET", "<SERVER><List_Info>GetParam</List_Info></SERVER>")
+        self.read_server_list(list_root)
+
+    def read_server_list(self, list_root: ET.Element) -> None:
         self.server_menu_name = sanitize_text(
             list_root.findtext(".//SERVER/List_Info/Menu_Name") or self.server_menu_name, 128
         )
@@ -408,6 +441,58 @@ class YamahaSession:
             if text:
                 lines.append({"index": index, "text": text, "attribute": attribute})
         self.server_lines = lines
+
+    def start_server_scan(self) -> None:
+        self.server_scan_next = 1 if self.server_max_line else 0
+        self.server_scan_items = {}
+        self.server_scan_origin = max(1, self.server_current_line)
+        self.server_scan_menu = self.server_menu_name
+        self.server_scan_layer = self.server_menu_layer
+        emit(
+            "server-list-reset",
+            menuName=self.server_menu_name,
+            total=self.server_max_line,
+        )
+        if not self.server_scan_next:
+            emit("server-list-done", total=0)
+
+    def scan_server_page(self) -> None:
+        start = self.server_scan_next
+        if not start:
+            return
+        self.post("PUT", f"<SERVER><List_Control><Jump_Line>{start}</Jump_Line></List_Control></SERVER>")
+        for attempt in range(4):
+            list_root = self.post("GET", "<SERVER><List_Info>GetParam</List_Info></SERVER>")
+            self.read_server_list(list_root)
+            page_start = ((max(1, self.server_current_line) - 1) // 8) * 8 + 1
+            if page_start == start:
+                break
+            if attempt == 3:
+                raise RuntimeError(f"Receiver did not load SERVER lines {start}-{start + 7}")
+            time.sleep(0.15)
+        if self.server_menu_name != self.server_scan_menu or self.server_menu_layer != self.server_scan_layer:
+            self.server_scan_next = 0
+            return
+        entries = [
+            {"line": start + int(line["index"]) - 1, "label": line["text"], "attribute": line["attribute"]}
+            for line in self.server_lines
+            if start + int(line["index"]) - 1 <= self.server_max_line
+        ]
+        self.server_scan_items.update({entry["line"]: entry["attribute"] for entry in entries})
+        emit("server-list-page", entries=entries, loaded=min(start + 7, self.server_max_line), total=self.server_max_line)
+        self.server_scan_next = start + 8 if start + 8 <= self.server_max_line else 0
+        if not self.server_scan_next:
+            if self.server_scan_origin != self.server_current_line:
+                self.post("PUT", f"<SERVER><List_Control><Jump_Line>{self.server_scan_origin}</Jump_Line></List_Control></SERVER>")
+            emit("server-list-done", total=self.server_max_line)
+
+    def wait_for_server_menu_change(self, previous: tuple[str, int, int]) -> None:
+        for _ in range(6):
+            time.sleep(0.12)
+            list_root = self.post("GET", "<SERVER><List_Info>GetParam</List_Info></SERVER>")
+            self.read_server_list(list_root)
+            if (self.server_menu_name, self.server_menu_layer, self.server_max_line) != previous:
+                return
 
     def server_payload(self) -> dict[str, Any]:
         return {
@@ -472,6 +557,8 @@ class YamahaSession:
             "trebleVal": self.treble,
             "adaptiveDrc": self.adaptive_drc,
             "connected": self.connected,
+            "inputChoices": self.input_choices,
+            "visibleInputs": self.visible_inputs,
             **self.server_payload(),
         }
 
@@ -521,6 +608,18 @@ class YamahaSession:
         elif action == "server-refresh":
             self.refresh_server()
             return self.status_payload()
+        elif re.fullmatch(r"server-open-\d{1,5}", action):
+            line_number = int(action.rsplit("-", 1)[1])
+            if not 1 <= line_number <= self.server_max_line:
+                raise ValueError("SERVER line is outside this folder")
+            previous_menu = (self.server_menu_name, self.server_menu_layer, self.server_max_line)
+            is_folder = self.server_scan_items.get(line_number) == "Container"
+            self.post("PUT", f"<SERVER><List_Control><Jump_Line>{line_number}</Jump_Line></List_Control></SERVER>")
+            self.post("PUT", "<SERVER><List_Control><Cursor>Sel</Cursor></List_Control></SERVER>")
+            if is_folder:
+                self.wait_for_server_menu_change(previous_menu)
+            else:
+                time.sleep(0.15)
         elif action in {"server-play", "server-stop"}:
             playback = action.removeprefix("server-").title()
             self.post("PUT", f"<SERVER><Play_Control><Playback>{playback}</Playback></Play_Control></SERVER>")
@@ -546,6 +645,7 @@ class YamahaSession:
             self.server_shuffle = target
             time.sleep(SERVER_SETTLE_SECONDS)
         elif action in {"server-up", "server-down", "server-back", "server-select", "server-home"}:
+            previous_menu = (self.server_menu_name, self.server_menu_layer, self.server_max_line)
             cursor = {
                 "server-up": "Up",
                 "server-down": "Down",
@@ -554,7 +654,10 @@ class YamahaSession:
                 "server-home": "Return to Home",
             }[action]
             self.post("PUT", f"<SERVER><List_Control><Cursor>{cursor}</Cursor></List_Control></SERVER>")
-            time.sleep(SERVER_SETTLE_SECONDS)
+            if action in {"server-back", "server-home"} and self.server_menu_layer > 1:
+                self.wait_for_server_menu_change(previous_menu)
+            else:
+                time.sleep(0.15)
         elif action in {"server-page-up", "server-page-down"}:
             page = "Up" if action == "server-page-up" else "Down"
             self.post("PUT", f"<SERVER><List_Control><Page>{page}</Page></List_Control></SERVER>")
@@ -626,6 +729,33 @@ class YamahaSession:
 
     def handle_request(self, request: dict[str, Any]) -> None:
         operation = str(request.get("op", ""))[:32]
+        if operation == "set-visible-inputs":
+            values = request.get("values")
+            if not isinstance(values, list) or len(values) > 32:
+                raise ValueError("Invalid input selection")
+            available = {choice["id"] for choice in self.input_choices}
+            if any(not isinstance(value, str) or value not in available for value in values):
+                raise ValueError("Unknown receiver input")
+            self.visible_inputs = list(dict.fromkeys(values))
+            self.save_state()
+            emit("settings", inputChoices=self.input_choices, visibleInputs=self.visible_inputs)
+            return
+        if operation == "set-input":
+            value = request.get("value")
+            if not isinstance(value, str) or value not in {choice["id"] for choice in self.input_choices}:
+                raise ValueError("Unknown receiver input")
+            self.server_scan_next = 0
+            self.post("PUT", f"<Main_Zone><Input><Input_Sel>{html.escape(value)}</Input_Sel></Input></Main_Zone>")
+            for attempt in range(6):
+                self.refresh()
+                if self.input_sel == value and (value.upper() != "SERVER" or self.server_available):
+                    break
+                if attempt < 5:
+                    time.sleep(0.15)
+            emit("result", action=operation, result=self.status_payload().get("status", ""), **self.status_payload())
+            if value.upper() == "SERVER":
+                self.start_server_scan()
+            return
         if operation == "set-bass":
             val = max(-60, min(60, int(request.get("value", 0))))
             self.post(
@@ -670,6 +800,8 @@ class YamahaSession:
                 raise RuntimeError("Enter a host IP")
             resolve_and_validate_lan_ip(host)
             self.host = host
+            self.input_choices = []
+            self.server_scan_next = 0
             if request.get("name"):
                 self.name = str(request["name"]).strip()[:64]
             self.refresh()
@@ -686,9 +818,27 @@ class YamahaSession:
         except Exception as error:
             emit("error", action="connect", message=sanitize_text(str(error), 256), connected=False)
 
+        commands: queue.Queue[str | None] = queue.Queue()
+
+        def read_commands() -> None:
+            while True:
+                line = sys.stdin.readline(MAX_STDIN_LINE)
+                commands.put(line if line else None)
+                if not line:
+                    return
+
+        threading.Thread(target=read_commands, daemon=True).start()
         while True:
-            line = sys.stdin.readline(MAX_STDIN_LINE)
-            if not line:
+            try:
+                line = commands.get_nowait() if self.server_scan_next else commands.get()
+            except queue.Empty:
+                try:
+                    self.scan_server_page()
+                except Exception as error:
+                    self.server_scan_next = 0
+                    emit("server-list-error", message=sanitize_text(str(error), 256))
+                continue
+            if line is None:
                 break
             raw = line.strip()
             if not raw or raw == "quit":
@@ -700,6 +850,13 @@ class YamahaSession:
                 if raw.startswith("{"):
                     self.handle_request(json.loads(raw))
                     continue
+                opened_attribute = ""
+                if raw.startswith("server-open-"):
+                    opened_attribute = self.server_scan_items.get(int(raw.rsplit("-", 1)[1]), "")
+                if raw in {"server-refresh", "server-back", "server-home", "input-server"} or (
+                    raw.startswith("server-open-") and opened_attribute != "Item"
+                ):
+                    self.server_scan_next = 0
                 result = self.dispatch(raw)
                 emit(
                     "result",
@@ -708,6 +865,11 @@ class YamahaSession:
                     elapsedMs=round((time.monotonic() - started) * 1000, 1),
                     **result,
                 )
+                if self.input_sel.upper() == "SERVER" and (
+                    raw in {"server-refresh", "server-back", "server-home", "input-server"}
+                    or (raw.startswith("server-open-") and opened_attribute != "Item")
+                ):
+                    self.start_server_scan()
             except Exception as error:
                 emit("error", action=sanitize_text(raw[:24], 24), message=sanitize_text(str(error), 256), connected=self.connected)
 
